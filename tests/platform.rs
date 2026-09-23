@@ -13,8 +13,6 @@ fn overlong_filename_errors_without_panicking() {
 mod unix {
     use super::*;
     use secure_file::Error;
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -41,8 +39,14 @@ mod unix {
         );
     }
 
+    // Linux permits arbitrary bytes in filenames; macOS requires valid UTF-8,
+    // so this is only meaningful on Linux.
+    #[cfg(target_os = "linux")]
     #[test]
     fn non_utf8_path_round_trip() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(OsStr::from_bytes(b"secret-\xff\xfe"));
 
