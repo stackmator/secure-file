@@ -1,0 +1,51 @@
+mod common;
+
+use secure_file::SecureFile;
+
+#[test]
+fn created_file_reports_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+
+    let file = SecureFile::create(&path).unwrap();
+    let permissions = file.permissions().unwrap();
+    assert!(permissions.owner_only);
+    assert!(permissions.is_owner_only());
+}
+
+#[test]
+fn insecure_file_reports_not_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, b"data").unwrap();
+    common::make_insecure_file(&path);
+
+    let file = SecureFile::open_unchecked(&path).unwrap();
+    assert!(!file.permissions().unwrap().owner_only);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_created_file_is_mode_600() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    let _ = SecureFile::create(&path).unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn unix_created_dir_is_mode_700() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("d");
+    let _ = secure_file::create_dir(&path).unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}
