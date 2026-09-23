@@ -229,8 +229,33 @@ fn create_opens_existing_private_file() {
     let path = dir.path().join("token");
     secure_file::write_private(&path, b"secret").unwrap();
 
-    let file = SecureFile::options().create(true).open(&path).unwrap();
+    let file = SecureFile::options()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
     assert!(file.is_private().unwrap());
+}
+
+#[test]
+fn create_without_write_access_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("token");
+
+    let err = SecureFile::options().create(true).open(&path).unwrap_err();
+    assert!(matches!(err, Error::InvalidInput), "unexpected: {err:?}");
+}
+
+#[test]
+fn create_new_without_write_access_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("token");
+
+    let err = SecureFile::options()
+        .create_new(true)
+        .open(&path)
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidInput), "unexpected: {err:?}");
 }
 
 #[test]

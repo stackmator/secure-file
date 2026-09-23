@@ -120,6 +120,9 @@ allows to read or write the resource.
 - **Atomic writes.** `write_private_atomic` writes to an owner-only temporary
   file in the same directory, flushes it, and renames it into place, so readers
   never see a partial file.
+- **Creation requires write access.** As with `std::fs::OpenOptions` on Unix,
+  `SecureFile::options().create(..)` must be combined with write or append
+  access; otherwise it fails with `Error::InvalidInput`.
 
 ## Supported platforms
 

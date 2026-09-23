@@ -83,6 +83,9 @@ impl SecureFileOptions {
     /// A newly created file receives owner-only permissions. An existing file
     /// is opened as-is and, unless [`SecureFileOptions::verify_private`] is
     /// disabled, must already be owner-only.
+    ///
+    /// Creation requires write (or append) access; otherwise opening fails
+    /// with [`Error::InvalidInput`].
     pub fn create(mut self, create: bool) -> Self {
         self.create = create;
         self
@@ -92,6 +95,9 @@ impl SecureFileOptions {
     ///
     /// This is an exclusive, atomic create (`O_CREAT | O_EXCL` on Unix,
     /// `CREATE_NEW` on Windows) and always applies owner-only permissions.
+    ///
+    /// Creation requires write (or append) access; otherwise opening fails
+    /// with [`Error::InvalidInput`].
     pub fn create_new(mut self, create_new: bool) -> Self {
         self.create_new = create_new;
         self
@@ -118,6 +124,11 @@ impl SecureFileOptions {
         let path = path.as_ref();
 
         if !(self.read || self.write || self.append) {
+            return Err(Error::InvalidInput);
+        }
+        // Creation is only supported together with write access, matching the
+        // behavior of `std::fs::OpenOptions` on Unix.
+        if (self.create || self.create_new) && !(self.write || self.append) {
             return Err(Error::InvalidInput);
         }
         if self.truncate && !self.write {
