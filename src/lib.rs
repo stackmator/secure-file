@@ -81,6 +81,8 @@
 
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![deny(rustdoc::broken_intra_doc_links)]
+#![warn(missing_debug_implementations)]
 
 mod appdir;
 mod dir;

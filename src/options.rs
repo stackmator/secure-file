@@ -22,6 +22,7 @@ use std::path::Path;
 /// # }
 /// ```
 #[derive(Debug, Clone)]
+#[must_use = "SecureFileOptions does nothing unless you call `.open(..)`"]
 pub struct SecureFileOptions {
     read: bool,
     write: bool,

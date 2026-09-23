@@ -72,3 +72,35 @@ jobs:
             cargo check --all-targets --target "$target"
             echo "::endgroup::"
           done
+
+  msrv:
+    name: msrv (1.74)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust 1.74
+        uses: dtolnay/rust-toolchain@1.74.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check library on MSRV
+        run: cargo check --lib
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build documentation
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings

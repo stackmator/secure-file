@@ -1,5 +1,7 @@
 # secure-file
 
+[![CI](https://github.com/stackmator/secure-file/actions/workflows/ci.yml/badge.svg)](https://github.com/stackmator/secure-file/actions/workflows/ci.yml)
+
 Cross-platform owner-only filesystem access for Rust.
 
 `secure-file` provides a small API for creating and opening files and
@@ -149,7 +151,7 @@ allows to read or write the resource.
 
 Linux, macOS and Windows are tested on every commit. The Unix implementation
 also builds for FreeBSD, NetBSD, illumos and other architectures (checked in
-CI).
+CI). The minimum supported Rust version is **1.74**.
 
 ## Roadmap
 
@@ -163,5 +165,5 @@ CI).
 
 ## License
 
-Licensed under either of Apache License, Version 2.0 or MIT license at your
-option.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
