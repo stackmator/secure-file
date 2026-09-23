@@ -59,14 +59,12 @@ impl SecureDir {
 
     /// Returns `true` when only the owner can access this directory.
     pub fn is_private(&self) -> Result<bool> {
-        platform::is_dir_private(&self.path)
+        Ok(self.permissions()?.owner_only)
     }
 
     /// Returns a platform-independent view of this directory's permissions.
     pub fn permissions(&self) -> Result<SecurePermissions> {
-        Ok(SecurePermissions {
-            owner_only: self.is_private()?,
-        })
+        platform::dir_permissions(&self.path)
     }
 
     /// Returns the path of this directory.

@@ -34,6 +34,19 @@
 //! # }
 //! ```
 //!
+//! To replace a file atomically — so readers never observe a partial file —
+//! use [`write_private_atomic`]:
+//!
+//! ```no_run
+//! # fn main() -> secure_file::Result<()> {
+//! secure_file::write_private_atomic("api-key", b"secret")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For control over open flags and symlink handling, use the builder returned
+//! by [`SecureFile::options`].
+//!
 //! # Security model
 //!
 //! `secure-file` protects files against access by other operating-system users
@@ -58,14 +71,18 @@
 mod dir;
 mod error;
 mod file;
+mod options;
 mod permissions;
 mod platform;
 
 pub use crate::dir::SecureDir;
 pub use crate::error::{Error, Result};
 pub use crate::file::SecureFile;
+pub use crate::options::SecureFileOptions;
 pub use crate::permissions::SecurePermissions;
 
+use std::ffi::OsString;
+use std::io;
 use std::path::Path;
 
 /// Writes `data` to `path` as a file that only the current user can access.
@@ -106,6 +123,98 @@ where
         Err(err) => Err(err),
     }
 }
+
+/// Atomically writes `data` to `path` as a file that only the current user can
+/// access.
+///
+/// The data is first written to a temporary file created with owner-only
+/// permissions in the same directory, flushed to disk, and then renamed over
+/// `path`. A reader therefore never observes a partially written file, and the
+/// destination is never left in a world-readable state. Symbolic links at
+/// `path` are rejected.
+///
+/// ```no_run
+/// # fn main() -> secure_file::Result<()> {
+/// secure_file::write_private_atomic("credentials.json", b"secret")?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn write_private_atomic<P, D>(path: P, data: D) -> Result<()>
+where
+    P: AsRef<Path>,
+    D: AsRef<[u8]>,
+{
+    let path = path.as_ref();
+    let data = data.as_ref();
+
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            return Err(Error::SymlinkDetected);
+        }
+    }
+
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+
+    let (temporary_path, mut temporary) = create_temporary(parent, path)?;
+
+    let write_result = (|| -> Result<()> {
+        temporary.write_all(data)?;
+        temporary.sync_all()?;
+        Ok(())
+    })();
+    drop(temporary);
+
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(err);
+    }
+
+    if let Err(err) = std::fs::rename(&temporary_path, path) {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(Error::from(err));
+    }
+
+    sync_parent(parent);
+    Ok(())
+}
+
+fn create_temporary(parent: &Path, target: &Path) -> Result<(std::path::PathBuf, SecureFile)> {
+    for attempt in 0..128u32 {
+        let candidate = parent.join(temporary_name(target, attempt));
+        match SecureFile::create(&candidate) {
+            Ok(file) => return Ok((candidate, file)),
+            Err(Error::AlreadyExists) => continue,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(Error::Io(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not create a unique temporary file",
+    )))
+}
+
+fn temporary_name(target: &Path, attempt: u32) -> OsString {
+    let mut name = OsString::from(".");
+    if let Some(file_name) = target.file_name() {
+        name.push(file_name);
+    }
+    name.push(format!(".{}.{}.tmp", std::process::id(), attempt));
+    name
+}
+
+#[cfg(unix)]
+fn sync_parent(parent: &Path) {
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_parent: &Path) {}
 
 /// Reads the entire contents of a private file.
 ///

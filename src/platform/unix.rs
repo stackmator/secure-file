@@ -1,6 +1,6 @@
-use crate::{Error, Result};
+use crate::platform::OpenParams;
+use crate::{Error, Result, SecurePermissions};
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
@@ -10,8 +10,8 @@ const DIR_MODE: u32 = 0o700;
 const OPEN_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_CLOEXEC;
 const DIR_FLAGS: i32 = libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_DIRECTORY;
 
-fn invalid_input(message: &'static str) -> Error {
-    Error::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
+fn invalid_input(_message: &'static str) -> Error {
+    Error::InvalidInput
 }
 
 /// Rejects symbolic links up front so callers get a precise
@@ -26,31 +26,73 @@ fn reject_symlink(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn create_file(path: &Path) -> Result<File> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .mode(FILE_MODE)
-        .custom_flags(OPEN_FLAGS)
-        .open(path)?;
-    Ok(file)
+fn permissions_from_mode(mode: u32) -> SecurePermissions {
+    SecurePermissions {
+        owner_only: mode & 0o077 == 0,
+        owner_read: mode & 0o400 != 0,
+        owner_write: mode & 0o200 != 0,
+        owner_execute: mode & 0o100 != 0,
+    }
 }
 
-pub(crate) fn open_file(path: &Path, write: bool) -> Result<File> {
-    reject_symlink(path)?;
+pub(crate) fn open_with(path: &Path, params: &OpenParams) -> Result<File> {
+    if !params.follow_symlinks {
+        reject_symlink(path)?;
+    }
 
-    let file = OpenOptions::new()
-        .read(true)
-        .write(write)
-        .custom_flags(OPEN_FLAGS)
-        .open(path)?;
+    let mut options = OpenOptions::new();
+    options.read(params.read);
+    options.write(params.write || params.append);
+    if params.append {
+        options.append(true);
+    }
+    if params.truncate {
+        options.truncate(true);
+    }
+    if params.create_new {
+        options.create_new(true);
+    } else if params.create {
+        options.create(true);
+    }
+    if params.create || params.create_new {
+        options.mode(FILE_MODE);
+    }
+    if params.follow_symlinks {
+        options.custom_flags(libc::O_CLOEXEC);
+    } else {
+        options.custom_flags(OPEN_FLAGS);
+    }
+
+    let file = options.open(path)?;
 
     if file.metadata()?.is_dir() {
         return Err(invalid_input("path is a directory, not a file"));
     }
 
     Ok(file)
+}
+
+pub(crate) fn create_file(path: &Path) -> Result<File> {
+    open_with(
+        path,
+        &OpenParams {
+            read: true,
+            write: true,
+            create_new: true,
+            ..OpenParams::default()
+        },
+    )
+}
+
+pub(crate) fn open_file(path: &Path, write: bool) -> Result<File> {
+    open_with(
+        path,
+        &OpenParams {
+            read: true,
+            write,
+            ..OpenParams::default()
+        },
+    )
 }
 
 pub(crate) fn ensure_file_private(file: &File) -> Result<()> {
@@ -60,9 +102,8 @@ pub(crate) fn ensure_file_private(file: &File) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_file_private(file: &File) -> Result<bool> {
-    let mode = file.metadata()?.mode();
-    Ok(mode & 0o077 == 0)
+pub(crate) fn file_permissions(file: &File) -> Result<SecurePermissions> {
+    Ok(permissions_from_mode(file.metadata()?.mode()))
 }
 
 pub(crate) fn create_dir(path: &Path) -> Result<()> {
@@ -101,7 +142,7 @@ pub(crate) fn ensure_dir_private(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_dir_private(path: &Path) -> Result<bool> {
+pub(crate) fn dir_permissions(path: &Path) -> Result<SecurePermissions> {
     reject_symlink(path)?;
 
     let dir = OpenOptions::new()
@@ -109,6 +150,5 @@ pub(crate) fn is_dir_private(path: &Path) -> Result<bool> {
         .custom_flags(DIR_FLAGS)
         .open(path)?;
 
-    let mode = dir.metadata()?.mode();
-    Ok(mode & 0o077 == 0)
+    Ok(permissions_from_mode(dir.metadata()?.mode()))
 }

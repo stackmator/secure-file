@@ -1,4 +1,5 @@
-use crate::{Error, Result};
+use crate::platform::OpenParams;
+use crate::{Error, Result, SecurePermissions};
 use std::ffi::c_void;
 use std::fs::File;
 use std::io;
@@ -10,7 +11,8 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::core::BOOL;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, LocalFree, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, LocalFree, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, GetSecurityInfo, SetNamedSecurityInfoW, SetSecurityInfo, SE_FILE_OBJECT,
@@ -25,10 +27,11 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateDirectoryW, CreateFileW, GetFileAttributesW, GetFileInformationByHandle, ReOpenFile,
-    BY_HANDLE_FILE_INFORMATION, CREATE_NEW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, INVALID_FILE_ATTRIBUTES, OPEN_EXISTING,
-    READ_CONTROL, WRITE_DAC,
+    BY_HANDLE_FILE_INFORMATION, CREATE_ALWAYS, CREATE_NEW, FILE_ALL_ACCESS, FILE_APPEND_DATA,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_EXECUTE,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_WRITE_DATA, INVALID_FILE_ATTRIBUTES, OPEN_ALWAYS, OPEN_EXISTING,
+    READ_CONTROL, TRUNCATE_EXISTING, WRITE_DAC,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -38,8 +41,8 @@ const ACCESS_ALLOWED_OBJECT_ACE_TYPE: u8 = 5;
 
 const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
-fn invalid_input(message: &'static str) -> Error {
-    Error::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
+fn invalid_input() -> Error {
+    Error::InvalidInput
 }
 
 fn last_error() -> Error {
@@ -48,6 +51,15 @@ fn last_error() -> Error {
 
 fn win32_error(code: u32) -> Error {
     Error::from(io::Error::from_raw_os_error(code as i32))
+}
+
+fn no_access() -> SecurePermissions {
+    SecurePermissions {
+        owner_only: false,
+        owner_read: false,
+        owner_write: false,
+        owner_execute: false,
+    }
 }
 
 /// A buffer whose start is aligned to 8 bytes, suitable for the Windows
@@ -178,13 +190,13 @@ fn attributes(file: &File) -> Result<u32> {
     Ok(info.dwFileAttributes)
 }
 
-fn ensure_regular_file(file: &File) -> Result<()> {
+fn validate_file(file: &File, follow_symlinks: bool) -> Result<()> {
     let attrs = attributes(file)?;
-    if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    if !follow_symlinks && attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(Error::SymlinkDetected);
     }
     if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
-        return Err(invalid_input("path is a directory, not a file"));
+        return Err(invalid_input());
     }
     Ok(())
 }
@@ -204,52 +216,91 @@ fn reopen_for_security(file: &File) -> Result<HANDLE> {
     Ok(handle)
 }
 
-pub(crate) fn create_file(path: &Path) -> Result<File> {
-    let sid = current_user_sid()?;
-    let descriptor = owner_only_descriptor(sid.as_ptr() as PSID)?;
-    let attributes = security_attributes(&descriptor);
-    let path = wide(path);
+pub(crate) fn open_with(path: &Path, params: &OpenParams) -> Result<File> {
+    let mut access: u32 = 0;
+    if params.read {
+        access |= GENERIC_READ;
+    }
+    if params.write {
+        access |= GENERIC_WRITE;
+    }
+    if params.append {
+        access |= FILE_APPEND_DATA;
+    }
 
-    let handle = unsafe {
-        CreateFileW(
-            path.as_ptr(),
-            GENERIC_READ | GENERIC_WRITE,
-            SHARE_ALL,
-            &attributes,
-            CREATE_NEW,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
-            null_mut(),
-        )
-    };
-
-    let file = handle_from_create(handle)?;
-    ensure_regular_file(&file)?;
-    Ok(file)
-}
-
-pub(crate) fn open_file(path: &Path, write: bool) -> Result<File> {
-    let access = if write {
-        GENERIC_READ | GENERIC_WRITE
+    let disposition = if params.create_new {
+        CREATE_NEW
+    } else if params.create && params.truncate {
+        CREATE_ALWAYS
+    } else if params.create {
+        OPEN_ALWAYS
+    } else if params.truncate {
+        TRUNCATE_EXISTING
     } else {
-        GENERIC_READ
+        OPEN_EXISTING
     };
-    let path = wide(path);
 
+    let creating = params.create || params.create_new;
+    let sid = if creating {
+        Some(current_user_sid()?)
+    } else {
+        None
+    };
+    let descriptor = match &sid {
+        Some(sid) => Some(owner_only_descriptor(sid.as_ptr() as PSID)?),
+        None => None,
+    };
+    let security = descriptor.as_ref().map(security_attributes);
+    let security_ptr = security.as_ref().map_or(null(), |attributes| {
+        attributes as *const SECURITY_ATTRIBUTES
+    });
+
+    let flags = FILE_ATTRIBUTE_NORMAL
+        | if params.follow_symlinks {
+            0
+        } else {
+            FILE_FLAG_OPEN_REPARSE_POINT
+        };
+
+    let path = wide(path);
     let handle = unsafe {
         CreateFileW(
             path.as_ptr(),
             access,
             SHARE_ALL,
-            null(),
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            security_ptr,
+            disposition,
+            flags,
             null_mut(),
         )
     };
 
     let file = handle_from_create(handle)?;
-    ensure_regular_file(&file)?;
+    validate_file(&file, params.follow_symlinks)?;
     Ok(file)
+}
+
+pub(crate) fn create_file(path: &Path) -> Result<File> {
+    open_with(
+        path,
+        &OpenParams {
+            read: true,
+            write: true,
+            create_new: true,
+            ..OpenParams::default()
+        },
+    )
+}
+
+pub(crate) fn open_file(path: &Path, write: bool) -> Result<File> {
+    open_with(
+        path,
+        &OpenParams {
+            read: true,
+            write,
+            ..OpenParams::default()
+        },
+    )
 }
 
 pub(crate) fn ensure_file_private(file: &File) -> Result<()> {
@@ -276,7 +327,7 @@ pub(crate) fn ensure_file_private(file: &File) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_file_private(file: &File) -> Result<bool> {
+pub(crate) fn file_permissions(file: &File) -> Result<SecurePermissions> {
     let handle = reopen_for_security(file)?;
     let mut descriptor: *mut c_void = null_mut();
     let mut dacl: *mut ACL = null_mut();
@@ -300,28 +351,29 @@ pub(crate) fn is_file_private(file: &File) -> Result<bool> {
     }
 
     let sid = current_user_sid()?;
-    let owner_only = dacl_is_owner_only(descriptor, sid.as_ptr() as PSID);
+    let permissions = dacl_permissions(descriptor, sid.as_ptr() as PSID);
 
     unsafe {
         LocalFree(descriptor);
         CloseHandle(handle);
     }
-    Ok(owner_only)
+    Ok(permissions)
 }
 
-/// Returns `true` when the DACL grants access only to `user`.
-fn dacl_is_owner_only(descriptor: *mut c_void, user: PSID) -> bool {
+/// Inspects a DACL and reports whether it grants access only to `user`, along
+/// with the access granted to that user.
+fn dacl_permissions(descriptor: *mut c_void, user: PSID) -> SecurePermissions {
     unsafe {
         let mut present: BOOL = 0;
         let mut dacl: *mut ACL = null_mut();
         let mut defaulted: BOOL = 0;
 
         if GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) == 0 {
-            return false;
+            return no_access();
         }
         // A NULL DACL grants everyone full access.
         if present == 0 || dacl.is_null() {
-            return false;
+            return no_access();
         }
 
         let mut info: ACL_SIZE_INFORMATION = std::mem::zeroed();
@@ -332,13 +384,16 @@ fn dacl_is_owner_only(descriptor: *mut c_void, user: PSID) -> bool {
             AclSizeInformation,
         ) == 0
         {
-            return false;
+            return no_access();
         }
+
+        let mut owner_mask: u32 = 0;
+        let mut others = false;
 
         for index in 0..info.AceCount {
             let mut ace: *mut c_void = null_mut();
             if GetAce(dacl, index, &mut ace) == 0 || ace.is_null() {
-                return false;
+                return no_access();
             }
 
             let header = &*(ace as *const ACE_HEADER);
@@ -346,19 +401,26 @@ fn dacl_is_owner_only(descriptor: *mut c_void, user: PSID) -> bool {
                 ACCESS_ALLOWED_ACE_TYPE => {
                     let allowed = &*(ace as *const ACCESS_ALLOWED_ACE);
                     let sid = &allowed.SidStart as *const u32 as PSID;
-                    if EqualSid(sid, user) == 0 {
-                        return false;
+                    if EqualSid(sid, user) != 0 {
+                        owner_mask |= allowed.Mask;
+                    } else {
+                        others = true;
                     }
                 }
                 ACCESS_ALLOWED_OBJECT_ACE_TYPE => {
                     // Object ACEs carry a variable-length SID; be conservative.
-                    return false;
+                    others = true;
                 }
                 _ => {}
             }
         }
 
-        true
+        SecurePermissions {
+            owner_only: !others,
+            owner_read: owner_mask & (FILE_READ_DATA | GENERIC_READ) != 0,
+            owner_write: owner_mask & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE) != 0,
+            owner_execute: owner_mask & (FILE_EXECUTE | GENERIC_EXECUTE) != 0,
+        }
     }
 }
 
@@ -388,7 +450,7 @@ pub(crate) fn open_dir(path: &Path) -> Result<()> {
         return Err(Error::SymlinkDetected);
     }
     if attrs & FILE_ATTRIBUTE_DIRECTORY == 0 {
-        return Err(invalid_input("path is not a directory"));
+        return Err(invalid_input());
     }
     Ok(())
 }
@@ -416,7 +478,7 @@ pub(crate) fn ensure_dir_private(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_dir_private(path: &Path) -> Result<bool> {
+pub(crate) fn dir_permissions(path: &Path) -> Result<SecurePermissions> {
     let path = wide(path);
     let mut descriptor: *mut c_void = null_mut();
     let mut dacl: *mut ACL = null_mut();
@@ -439,7 +501,7 @@ pub(crate) fn is_dir_private(path: &Path) -> Result<bool> {
     }
 
     let sid = current_user_sid()?;
-    let owner_only = dacl_is_owner_only(descriptor, sid.as_ptr() as PSID);
+    let permissions = dacl_permissions(descriptor, sid.as_ptr() as PSID);
     unsafe { LocalFree(descriptor) };
-    Ok(owner_only)
+    Ok(permissions)
 }

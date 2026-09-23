@@ -6,7 +6,9 @@ use std::io::{self, ErrorKind};
 fn display_messages_are_non_empty() {
     let variants = [
         Error::Io(io::Error::other("boom")),
+        Error::NotFound,
         Error::PermissionDenied,
+        Error::InvalidInput,
         Error::InsecurePermissions,
         Error::SymlinkDetected,
         Error::AlreadyExists,
@@ -22,7 +24,9 @@ fn source_is_only_set_for_io() {
     let io_err = Error::Io(io::Error::other("boom"));
     assert!(io_err.source().is_some());
 
+    assert!(Error::NotFound.source().is_none());
     assert!(Error::PermissionDenied.source().is_none());
+    assert!(Error::InvalidInput.source().is_none());
     assert!(Error::InsecurePermissions.source().is_none());
     assert!(Error::SymlinkDetected.source().is_none());
     assert!(Error::AlreadyExists.source().is_none());
@@ -33,15 +37,38 @@ fn io_error_kinds_map_to_specific_variants() {
     let already = Error::from(io::Error::new(ErrorKind::AlreadyExists, "x"));
     assert!(matches!(already, Error::AlreadyExists));
 
+    let missing = Error::from(io::Error::new(ErrorKind::NotFound, "x"));
+    assert!(matches!(missing, Error::NotFound));
+
     let denied = Error::from(io::Error::new(ErrorKind::PermissionDenied, "x"));
     assert!(matches!(denied, Error::PermissionDenied));
 
-    let missing = Error::from(io::Error::new(ErrorKind::NotFound, "x"));
-    assert!(matches!(missing, Error::Io(_)));
+    let invalid = Error::from(io::Error::new(ErrorKind::InvalidInput, "x"));
+    assert!(matches!(invalid, Error::InvalidInput));
+
+    let other = Error::from(io::Error::other("x"));
+    assert!(matches!(other, Error::Io(_)));
+}
+
+#[test]
+fn kind_matches_variant() {
+    assert_eq!(Error::NotFound.kind(), ErrorKind::NotFound);
+    assert_eq!(Error::PermissionDenied.kind(), ErrorKind::PermissionDenied);
+    assert_eq!(Error::InvalidInput.kind(), ErrorKind::InvalidInput);
+    assert_eq!(Error::AlreadyExists.kind(), ErrorKind::AlreadyExists);
+    assert_eq!(
+        Error::InsecurePermissions.kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(Error::SymlinkDetected.kind(), ErrorKind::Other);
+
+    let io_err = Error::Io(io::Error::new(ErrorKind::UnexpectedEof, "x"));
+    assert_eq!(io_err.kind(), ErrorKind::UnexpectedEof);
 }
 
 #[test]
 fn error_converts_back_to_io_error() {
+    assert_eq!(io::Error::from(Error::NotFound).kind(), ErrorKind::NotFound);
     assert_eq!(
         io::Error::from(Error::AlreadyExists).kind(),
         ErrorKind::AlreadyExists
@@ -49,6 +76,10 @@ fn error_converts_back_to_io_error() {
     assert_eq!(
         io::Error::from(Error::PermissionDenied).kind(),
         ErrorKind::PermissionDenied
+    );
+    assert_eq!(
+        io::Error::from(Error::InvalidInput).kind(),
+        ErrorKind::InvalidInput
     );
     assert_eq!(
         io::Error::from(Error::InsecurePermissions).kind(),

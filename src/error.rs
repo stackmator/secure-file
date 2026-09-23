@@ -6,8 +6,13 @@ use std::io;
 pub enum Error {
     /// A wrapped operating-system error that has no more specific mapping.
     Io(io::Error),
+    /// The requested file or directory does not exist.
+    NotFound,
     /// The operation was denied by the operating system.
     PermissionDenied,
+    /// The arguments were invalid, for example an empty path or an
+    /// incompatible combination of options.
+    InvalidInput,
     /// The file or directory exists but its permissions allow access by
     /// parties other than the owner.
     InsecurePermissions,
@@ -18,11 +23,29 @@ pub enum Error {
     AlreadyExists,
 }
 
+impl Error {
+    /// Returns the underlying [`io::ErrorKind`] most closely associated with
+    /// this error.
+    pub fn kind(&self) -> io::ErrorKind {
+        match self {
+            Error::Io(err) => err.kind(),
+            Error::NotFound => io::ErrorKind::NotFound,
+            Error::PermissionDenied => io::ErrorKind::PermissionDenied,
+            Error::InvalidInput => io::ErrorKind::InvalidInput,
+            Error::InsecurePermissions => io::ErrorKind::PermissionDenied,
+            Error::SymlinkDetected => io::ErrorKind::Other,
+            Error::AlreadyExists => io::ErrorKind::AlreadyExists,
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(err) => write!(f, "{err}"),
+            Error::NotFound => write!(f, "file or directory not found"),
             Error::PermissionDenied => write!(f, "permission denied"),
+            Error::InvalidInput => write!(f, "invalid input"),
             Error::InsecurePermissions => {
                 write!(f, "file or directory is accessible by other users")
             }
@@ -52,7 +75,9 @@ impl From<io::Error> for Error {
 
         match err.kind() {
             io::ErrorKind::AlreadyExists => Error::AlreadyExists,
+            io::ErrorKind::NotFound => Error::NotFound,
             io::ErrorKind::PermissionDenied => Error::PermissionDenied,
+            io::ErrorKind::InvalidInput => Error::InvalidInput,
             _ => Error::Io(err),
         }
     }
@@ -62,9 +87,11 @@ impl From<Error> for io::Error {
     fn from(err: Error) -> Self {
         match err {
             Error::Io(err) => err,
+            Error::NotFound => io::Error::new(io::ErrorKind::NotFound, "not found"),
             Error::PermissionDenied => {
                 io::Error::new(io::ErrorKind::PermissionDenied, "permission denied")
             }
+            Error::InvalidInput => io::Error::new(io::ErrorKind::InvalidInput, "invalid input"),
             Error::InsecurePermissions => io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "file or directory is accessible by other users",

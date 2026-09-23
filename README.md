@@ -37,6 +37,13 @@ secure_file::write_private("~/.myapp/api-key", api_key)?;
 let api_key = secure_file::read_private("~/.myapp/api-key")?;
 ```
 
+Replace a file atomically, so a reader never observes a partial or insecure
+file:
+
+```rust
+secure_file::write_private_atomic("~/.myapp/api-key", api_key)?;
+```
+
 Create a private directory:
 
 ```rust
@@ -59,9 +66,26 @@ let file = file.ensure_private()?;
 Inspect permissions in a platform-independent way:
 
 ```rust
-if SecureFile::open("credentials.json")?.is_private()? {
+let permissions = SecureFile::open("credentials.json")?.permissions()?;
+if permissions.owner_only {
     println!("Safe");
 }
+println!(
+    "read={} write={} execute={}",
+    permissions.owner_read, permissions.owner_write, permissions.owner_execute
+);
+```
+
+Take fine-grained control over open flags and symlink handling:
+
+```rust
+use secure_file::SecureFile;
+
+let file = SecureFile::options()
+    .create(true)
+    .truncate(true)
+    .write(true)
+    .open("credentials.json")?;
 ```
 
 ## Security model
@@ -88,16 +112,27 @@ allows to read or write the resource.
   `Error::AlreadyExists` if the path already exists, avoiding TOCTOU races.
 - **Symlinks are rejected.** Files are opened with `O_NOFOLLOW` on Unix and
   `FILE_FLAG_OPEN_REPARSE_POINT` on Windows; reparse points are detected and
-  rejected.
+  rejected. Use `SecureFile::options().follow_symlinks(true)` to opt out.
 - **Open verifies by default.** `SecureFile::open` / `SecureDir::open` return
   `Error::InsecurePermissions` when the resource is accessible by others. Use
-  the `open_unchecked` variants to inspect or repair such resources.
+  the `open_unchecked` variants to inspect or repair such resources, or
+  `SecureFile::options().verify_private(false)`.
+- **Atomic writes.** `write_private_atomic` writes to an owner-only temporary
+  file in the same directory, flushes it, and renames it into place, so readers
+  never see a partial file.
+
+## Supported platforms
+
+Linux, macOS and Windows are tested on every commit. The Unix implementation
+also builds for FreeBSD, NetBSD, illumos and other architectures (checked in
+CI).
 
 ## Roadmap
 
 - **v0.1** — `SecureFile` and `SecureDir` create/open/ensure, `write_private`,
   `read_private`, Linux/macOS/Windows.
-- **v0.2** — atomic writes, symlink controls, richer permission inspection.
+- **v0.2** — atomic writes, symlink controls, richer permission inspection,
+  more Unix targets. *(current)*
 - **v0.3** — secure temporary files and directories, application-private
   directories, further Windows improvements.
 - **v1.0** — stable API and a strong cross-platform test suite.

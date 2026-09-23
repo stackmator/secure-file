@@ -27,7 +27,7 @@ fn create_dir_with_missing_parent_fails() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing").join("child");
     let err = SecureDir::create(&path).unwrap_err();
-    assert!(matches!(err, Error::Io(_)), "unexpected: {err:?}");
+    assert!(matches!(err, Error::NotFound), "unexpected: {err:?}");
 }
 
 #[test]

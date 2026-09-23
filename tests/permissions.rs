@@ -14,6 +14,29 @@ fn created_file_reports_owner_only() {
 }
 
 #[test]
+fn created_file_owner_can_read_and_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+
+    let file = SecureFile::create(&path).unwrap();
+    let permissions = file.permissions().unwrap();
+    assert!(permissions.owner_read);
+    assert!(permissions.owner_write);
+}
+
+#[test]
+fn created_dir_owner_can_execute() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("d");
+
+    let secure = secure_file::create_dir(&path).unwrap();
+    let permissions = secure.permissions().unwrap();
+    assert!(permissions.owner_read);
+    assert!(permissions.owner_write);
+    assert!(permissions.owner_execute);
+}
+
+#[test]
 fn insecure_file_reports_not_owner_only() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("f");

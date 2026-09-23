@@ -50,3 +50,25 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  cross:
+    name: cross-check (other Unix targets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-freebsd,x86_64-unknown-netbsd,x86_64-unknown-illumos,aarch64-unknown-linux-gnu
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check other Unix targets
+        run: |
+          for target in x86_64-unknown-freebsd x86_64-unknown-netbsd x86_64-unknown-illumos aarch64-unknown-linux-gnu; do
+            echo "::group::cargo check --target $target"
+            cargo check --all-targets --target "$target"
+            echo "::endgroup::"
+          done

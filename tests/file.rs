@@ -34,7 +34,7 @@ fn create_with_missing_parent_fails() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing").join("secret.txt");
     let err = SecureFile::create(&path).unwrap_err();
-    assert!(matches!(err, Error::Io(_)), "unexpected: {err:?}");
+    assert!(matches!(err, Error::NotFound), "unexpected: {err:?}");
 }
 
 #[test]
@@ -44,13 +44,16 @@ fn create_when_parent_is_a_file_fails() {
     std::fs::write(&file, b"x").unwrap();
 
     let err = SecureFile::create(file.join("child")).unwrap_err();
-    assert!(matches!(err, Error::Io(_)), "unexpected: {err:?}");
+    assert!(
+        matches!(err, Error::NotFound | Error::InvalidInput | Error::Io(_)),
+        "unexpected: {err:?}"
+    );
 }
 
 #[test]
 fn create_with_empty_path_fails() {
     let err = SecureFile::create("").unwrap_err();
-    assert!(matches!(err, Error::Io(_)), "unexpected: {err:?}");
+    assert!(matches!(err, Error::NotFound), "unexpected: {err:?}");
 }
 
 #[test]

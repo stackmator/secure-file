@@ -1,3 +1,4 @@
+use crate::options::SecureFileOptions;
 use crate::platform;
 use crate::{Error, Result, SecurePermissions};
 use std::fmt;
@@ -19,6 +20,28 @@ pub struct SecureFile {
 }
 
 impl SecureFile {
+    /// Returns a builder for opening or creating a file with fine-grained
+    /// control over the open flags and symlink handling.
+    ///
+    /// ```no_run
+    /// # fn main() -> secure_file::Result<()> {
+    /// use secure_file::SecureFile;
+    ///
+    /// let file = SecureFile::options()
+    ///     .create_new(true)
+    ///     .write(true)
+    ///     .open("credentials.json")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn options() -> SecureFileOptions {
+        SecureFileOptions::new()
+    }
+
+    pub(crate) fn from_parts(file: File, path: PathBuf) -> Self {
+        SecureFile { file, path }
+    }
+
     /// Creates a new file, failing if it already exists.
     ///
     /// The file is created atomically with owner-only permissions. Symbolic
@@ -80,14 +103,12 @@ impl SecureFile {
 
     /// Returns `true` when only the owner can access this file.
     pub fn is_private(&self) -> Result<bool> {
-        platform::is_file_private(&self.file)
+        Ok(self.permissions()?.owner_only)
     }
 
     /// Returns a platform-independent view of this file's permissions.
     pub fn permissions(&self) -> Result<SecurePermissions> {
-        Ok(SecurePermissions {
-            owner_only: self.is_private()?,
-        })
+        platform::file_permissions(&self.file)
     }
 
     /// Returns the path this file was opened with.
