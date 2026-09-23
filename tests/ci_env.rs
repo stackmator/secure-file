@@ -42,7 +42,7 @@ fn persist_across_volumes_fails_cleanly() {
     // A temporary file on the default volume, moved onto the second volume.
     let temp = SecureTempFile::new().unwrap();
     let temporary = temp.path().to_path_buf();
-    let target = cross.join("token");
+    let target = cross.join("token-across-volumes");
 
     let err = temp.persist(&target).unwrap_err();
     assert!(!err.to_string().is_empty(), "unexpected: {err:?}");
@@ -60,7 +60,7 @@ fn persist_within_the_second_volume_succeeds() {
     let mut temp = SecureTempFile::new_in(&cross).unwrap();
     temp.write_all(b"data").unwrap();
 
-    let target = cross.join("token");
+    let target = cross.join("token-same-volume");
     temp.persist(&target).unwrap();
 
     assert_eq!(secure_file::read_private(&target).unwrap(), b"data");
