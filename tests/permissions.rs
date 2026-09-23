@@ -24,6 +24,26 @@ fn insecure_file_reports_not_owner_only() {
     assert!(!file.permissions().unwrap().owner_only);
 }
 
+#[test]
+fn created_dir_reports_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("d");
+
+    let secure = secure_file::create_dir(&path).unwrap();
+    assert!(secure.permissions().unwrap().owner_only);
+}
+
+#[test]
+fn insecure_dir_reports_not_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("d");
+    std::fs::create_dir(&path).unwrap();
+    common::make_insecure_dir(&path);
+
+    let secure = secure_file::SecureDir::open_unchecked(&path).unwrap();
+    assert!(!secure.permissions().unwrap().owner_only);
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_created_file_is_mode_600() {
