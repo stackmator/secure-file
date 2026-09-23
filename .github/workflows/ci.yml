@@ -113,6 +113,26 @@ jobs:
       - name: Run mount-dependent tests
         run: cargo test --test ci_env -- --nocapture
 
+  second-user:
+    name: second user (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create a second user
+        run: |
+          sudo useradd -m -s /bin/bash securefile-other
+          echo "SECURE_FILE_OTHER_USER=securefile-other" >> "$GITHUB_ENV"
+
+      - name: Run second-user tests
+        run: cargo test --test second_user -- --nocapture
+
   docs:
     name: docs
     runs-on: ubuntu-latest
