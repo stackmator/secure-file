@@ -160,8 +160,8 @@ CI). The minimum supported Rust version is **1.74**.
 - **v0.2** — atomic writes, symlink controls, richer permission inspection,
   more Unix targets.
 - **v0.3** — secure temporary files and directories, application-private
-  directories. *(current)*
-- **v1.0** — stable API and a strong cross-platform test suite.
+  directories.
+- **v1.0** — stable API and a strong cross-platform test suite. *(current)*
 
 ## License
 
