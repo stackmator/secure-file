@@ -16,7 +16,10 @@ mod unix {
         symlink(&target, &link).unwrap();
 
         let err = SecureFile::create(&link).unwrap_err();
-        assert!(matches!(err, Error::AlreadyExists | Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::AlreadyExists | Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"original");
     }
 
@@ -30,7 +33,10 @@ mod unix {
         symlink(&target, &link).unwrap();
 
         let err = SecureFile::open_unchecked(&link).unwrap_err();
-        assert!(matches!(err, Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -40,7 +46,10 @@ mod unix {
         symlink(dir.path().join("missing"), &link).unwrap();
 
         let err = SecureFile::open_unchecked(&link).unwrap_err();
-        assert!(matches!(err, Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -53,7 +62,10 @@ mod unix {
         symlink(&real, &link).unwrap();
 
         let err = SecureDir::open_unchecked(&link).unwrap_err();
-        assert!(matches!(err, Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
     }
 }
 
@@ -80,7 +92,10 @@ mod windows {
         }
 
         let err = SecureFile::create(&link).unwrap_err();
-        assert!(matches!(err, Error::AlreadyExists | Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::AlreadyExists | Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
         assert_eq!(std::fs::read(&target).unwrap(), b"original");
     }
 
@@ -97,6 +112,9 @@ mod windows {
         }
 
         let err = SecureFile::open_unchecked(&link).unwrap_err();
-        assert!(matches!(err, Error::SymlinkDetected));
+        assert!(
+            matches!(err, Error::SymlinkDetected),
+            "unexpected error: {err:?}"
+        );
     }
 }

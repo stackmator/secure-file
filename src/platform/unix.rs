@@ -14,6 +14,18 @@ fn invalid_input(message: &'static str) -> Error {
     Error::Io(io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
+/// Rejects symbolic links up front so callers get a precise
+/// [`Error::SymlinkDetected`]. The `O_NOFOLLOW` open that follows remains the
+/// actual enforcement against races; some platforms report `ENOTDIR` rather
+/// than `ELOOP` for `O_NOFOLLOW | O_DIRECTORY`, which would otherwise be
+/// ambiguous.
+fn reject_symlink(path: &Path) -> Result<()> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(Error::SymlinkDetected);
+    }
+    Ok(())
+}
+
 pub(crate) fn create_file(path: &Path) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
@@ -26,6 +38,8 @@ pub(crate) fn create_file(path: &Path) -> Result<File> {
 }
 
 pub(crate) fn open_file(path: &Path, write: bool) -> Result<File> {
+    reject_symlink(path)?;
+
     let file = OpenOptions::new()
         .read(true)
         .write(write)
@@ -59,6 +73,8 @@ pub(crate) fn create_dir(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn open_dir(path: &Path) -> Result<()> {
+    reject_symlink(path)?;
+
     let dir = OpenOptions::new()
         .read(true)
         .custom_flags(DIR_FLAGS)
@@ -72,6 +88,8 @@ pub(crate) fn open_dir(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn ensure_dir_private(path: &Path) -> Result<()> {
+    reject_symlink(path)?;
+
     let dir = OpenOptions::new()
         .read(true)
         .custom_flags(DIR_FLAGS)
@@ -84,6 +102,8 @@ pub(crate) fn ensure_dir_private(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn is_dir_private(path: &Path) -> Result<bool> {
+    reject_symlink(path)?;
+
     let dir = OpenOptions::new()
         .read(true)
         .custom_flags(DIR_FLAGS)
