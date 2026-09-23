@@ -48,6 +48,19 @@ fn insecure_file_reports_not_owner_only() {
 }
 
 #[test]
+fn insecure_file_owner_can_still_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("f");
+    std::fs::write(&path, b"data").unwrap();
+    common::make_insecure_file(&path);
+
+    let file = SecureFile::open_unchecked(&path).unwrap();
+    let permissions = file.permissions().unwrap();
+    assert!(!permissions.owner_only);
+    assert!(permissions.owner_read);
+}
+
+#[test]
 fn created_dir_reports_owner_only() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("d");

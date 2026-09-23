@@ -2,6 +2,16 @@ mod common;
 
 use secure_file::{Error, SecureFile};
 use std::path::Path;
+use std::sync::{Arc, Barrier};
+
+fn entries(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
 
 #[cfg(unix)]
 fn try_symlink_file(target: &Path, link: &Path) -> bool {
@@ -79,12 +89,65 @@ fn atomic_write_leaves_no_temporary_files() {
 
     secure_file::write_private_atomic(&path, b"secret").unwrap();
 
-    let entries: Vec<String> = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+    assert_eq!(entries(dir.path()), vec!["token".to_string()]);
+}
+
+#[test]
+fn atomic_write_to_directory_path_fails_and_cleans_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("sub");
+    std::fs::create_dir(&target).unwrap();
+
+    let err = secure_file::write_private_atomic(&target, b"secret").unwrap_err();
+    assert!(!err.to_string().is_empty(), "unexpected: {err:?}");
+    assert!(target.is_dir(), "the directory must not be replaced");
+
+    // The temporary file must have been removed on failure.
+    assert_eq!(entries(dir.path()), vec!["sub".to_string()]);
+}
+
+#[test]
+fn atomic_write_rejects_broken_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("dangling");
+    if !try_symlink_file(&dir.path().join("missing"), &link) {
+        eprintln!("skipping: symlink creation not permitted");
+        return;
+    }
+
+    let err = secure_file::write_private_atomic(&link, b"secret").unwrap_err();
+    assert!(matches!(err, Error::SymlinkDetected), "unexpected: {err:?}");
+}
+
+#[test]
+fn concurrent_atomic_writes_leave_one_private_file() {
+    const THREADS: usize = 8;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = Arc::new(dir.path().join("token"));
+    let barrier = Arc::new(Barrier::new(THREADS));
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|i| {
+            let path = Arc::clone(&path);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                secure_file::write_private_atomic(path.as_ref(), [b'0' + i as u8])
+            })
+        })
         .collect();
 
-    assert_eq!(entries, vec!["token".to_string()], "entries: {entries:?}");
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+
+    assert!(SecureFile::open(path.as_ref())
+        .unwrap()
+        .is_private()
+        .unwrap());
+    assert_eq!(secure_file::read_private(path.as_ref()).unwrap().len(), 1);
+    assert_eq!(entries(dir.path()), vec!["token".to_string()]);
 }
 
 #[test]
