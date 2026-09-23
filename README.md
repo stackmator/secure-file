@@ -21,35 +21,41 @@ created**, rather than being created and then tightened afterwards:
 use secure_file::SecureFile;
 use std::io::Write;
 
-let mut file = SecureFile::create("credentials.json")?;
-file.write_all(b"secret data")?;
-# Ok::<(), secure_file::Error>(())
+fn main() -> secure_file::Result<()> {
+    let mut file = SecureFile::create("credentials.json")?;
+    file.write_all(b"secret data")?;
+    Ok(())
+}
 ```
 
 That is conceptually `open(..., O_CREAT | O_EXCL, 0600)` on Unix and
 `CreateFile` with a restrictive security descriptor on Windows, so there is no
 window during which another user could open the file.
 
+Paths are used exactly as given; `~` is **not** expanded. Use
+`secure_file::app_dir` for a location under the platform's per-user data
+directory.
+
 ## Usage
 
 Write and read a whole secret:
 
 ```rust
-secure_file::write_private("~/.myapp/api-key", api_key)?;
-let api_key = secure_file::read_private("~/.myapp/api-key")?;
+secure_file::write_private("api-key", api_key)?;
+let api_key = secure_file::read_private("api-key")?;
 ```
 
 Replace a file atomically, so a reader never observes a partial or insecure
 file:
 
 ```rust
-secure_file::write_private_atomic("~/.myapp/api-key", api_key)?;
+secure_file::write_private_atomic("api-key", api_key)?;
 ```
 
 Create a private directory:
 
 ```rust
-let dir = secure_file::create_dir("~/.myapp")?;
+let dir = secure_file::create_dir("private-data")?;
 ```
 
 Open an existing file and verify that it is private:
