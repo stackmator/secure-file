@@ -106,17 +106,32 @@ fn apply_dacl(path: &Path, owner_sid: PSID, other_sid: PSID, other_is_deny: bool
         unsafe { InitializeAcl(acl, acl_size as u32, ACL_REVISION) },
         0
     );
-    assert_ne!(
-        unsafe { AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, owner_sid) },
-        0
-    );
 
-    let added = if other_is_deny {
-        unsafe { AddAccessDeniedAce(acl, ACL_REVISION, GENERIC_READ, other_sid) }
+    // Deny ACEs must precede allow ACEs: Windows stops at the first ACE that
+    // covers the requested access.
+    if other_is_deny {
+        assert_ne!(
+            unsafe { AddAccessDeniedAce(acl, ACL_REVISION, GENERIC_READ, other_sid) },
+            0,
+            "failed to add the deny ACE"
+        );
+        assert_ne!(
+            unsafe { AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, owner_sid) },
+            0,
+            "failed to add the allow ACE"
+        );
     } else {
-        unsafe { AddAccessAllowedAce(acl, ACL_REVISION, GENERIC_READ, other_sid) }
-    };
-    assert_ne!(added, 0, "failed to add the second ACE");
+        assert_ne!(
+            unsafe { AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, owner_sid) },
+            0,
+            "failed to add the allow ACE"
+        );
+        assert_ne!(
+            unsafe { AddAccessAllowedAce(acl, ACL_REVISION, GENERIC_READ, other_sid) },
+            0,
+            "failed to add the second allow ACE"
+        );
+    }
 
     let mut descriptor_buf = aligned(size_of::<SECURITY_DESCRIPTOR>());
     let descriptor = descriptor_buf.as_mut_ptr() as *mut SECURITY_DESCRIPTOR;
@@ -204,4 +219,21 @@ fn ensure_private_replaces_crafted_dacl() {
     let file = file.ensure_private().unwrap();
     assert!(file.is_private().unwrap());
     assert!(SecureFile::open(&path).is_ok());
+}
+
+#[test]
+fn explicit_deny_ace_for_current_user_denies_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("token");
+    std::fs::write(&path, b"data").unwrap();
+
+    let (_keep, user) = current_user_sid();
+    // allow(user, full) + deny(user, read): the deny ACE takes precedence.
+    apply_dacl(&path, user, user, true);
+
+    let err = SecureFile::open_unchecked(&path).unwrap_err();
+    assert!(
+        matches!(err, Error::PermissionDenied),
+        "unexpected: {err:?}"
+    );
 }

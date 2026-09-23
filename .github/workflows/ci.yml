@@ -88,6 +88,31 @@ jobs:
       - name: Check library on MSRV
         run: cargo check --lib
 
+  mounts:
+    name: mount-dependent (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare filesystems
+        run: |
+          sudo mkdir -p /mnt/secure-file-ro /mnt/secure-file-cross
+          sudo mount -t tmpfs tmpfs /mnt/secure-file-ro
+          sudo mount -t tmpfs tmpfs /mnt/secure-file-cross
+          sudo chmod 777 /mnt/secure-file-ro /mnt/secure-file-cross
+          sudo mount -o remount,ro /mnt/secure-file-ro
+          echo "SECURE_FILE_RO_DIR=/mnt/secure-file-ro" >> "$GITHUB_ENV"
+          echo "SECURE_FILE_CROSS_DIR=/mnt/secure-file-cross" >> "$GITHUB_ENV"
+
+      - name: Run mount-dependent tests
+        run: cargo test --test ci_env -- --nocapture
+
   docs:
     name: docs
     runs-on: ubuntu-latest
