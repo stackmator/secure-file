@@ -1,6 +1,7 @@
 use crate::platform::OpenParams;
 use crate::{Error, Result, SecurePermissions};
 use std::fs::{DirBuilder, File, OpenOptions};
+use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
@@ -20,10 +21,13 @@ fn invalid_input(_message: &'static str) -> Error {
 /// than `ELOOP` for `O_NOFOLLOW | O_DIRECTORY`, which would otherwise be
 /// ambiguous.
 fn reject_symlink(path: &Path) -> Result<()> {
-    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
-        return Err(Error::SymlinkDetected);
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::SymlinkDetected),
+        Ok(_) => Ok(()),
+        // A missing path is fine; creation will handle it.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(Error::from(err)),
     }
-    Ok(())
 }
 
 fn permissions_from_mode(mode: u32) -> SecurePermissions {
