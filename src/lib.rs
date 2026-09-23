@@ -47,6 +47,20 @@
 //! For control over open flags and symlink handling, use the builder returned
 //! by [`SecureFile::options`].
 //!
+//! Owner-only temporary files and directories are available through
+//! [`SecureTempFile`] and [`SecureTempDir`], and [`app_dir`] creates an
+//! application-private directory under the platform's per-user data directory.
+//!
+//! ```no_run
+//! # fn main() -> secure_file::Result<()> {
+//! use std::io::Write;
+//!
+//! let mut scratch = secure_file::SecureTempFile::new()?;
+//! scratch.write_all(b"temporary secret")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! # Security model
 //!
 //! `secure-file` protects files against access by other operating-system users
@@ -68,18 +82,22 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod appdir;
 mod dir;
 mod error;
 mod file;
 mod options;
 mod permissions;
 mod platform;
+mod temp;
 
+pub use crate::appdir::{app_data_dir, app_dir, app_dir_in};
 pub use crate::dir::SecureDir;
 pub use crate::error::{Error, Result};
 pub use crate::file::SecureFile;
 pub use crate::options::SecureFileOptions;
 pub use crate::permissions::SecurePermissions;
+pub use crate::temp::{SecureTempDir, SecureTempFile};
 
 use std::ffi::OsString;
 use std::io;

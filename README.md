@@ -88,6 +88,27 @@ let file = SecureFile::options()
     .open("credentials.json")?;
 ```
 
+Create owner-only temporary files and directories (removed on drop unless kept
+or persisted):
+
+```rust
+use secure_file::SecureTempFile;
+use std::io::Write;
+
+let mut scratch = SecureTempFile::new()?;
+scratch.write_all(b"temporary secret")?;
+let final_path = scratch.persist("credentials.json")?;
+
+let tmp_dir = secure_file::SecureTempDir::new()?;
+```
+
+Create an application-private directory under the platform's per-user data
+directory:
+
+```rust
+let dir = secure_file::app_dir("myapp")?;
+```
+
 ## Security model
 
 `secure-file` protects files against access by other operating-system users
@@ -135,9 +156,9 @@ CI).
 - **v0.1** — `SecureFile` and `SecureDir` create/open/ensure, `write_private`,
   `read_private`, Linux/macOS/Windows.
 - **v0.2** — atomic writes, symlink controls, richer permission inspection,
-  more Unix targets. *(current)*
+  more Unix targets.
 - **v0.3** — secure temporary files and directories, application-private
-  directories, further Windows improvements.
+  directories. *(current)*
 - **v1.0** — stable API and a strong cross-platform test suite.
 
 ## License
