@@ -1,4 +1,5 @@
 use crate::{Error, Result, SecureDir};
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 /// Returns the platform's per-user application data directory, creating it if
@@ -56,34 +57,130 @@ fn validate_name(name: &Path) -> Result<()> {
     }
 }
 
-#[cfg(windows)]
 fn platform_data_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
+    platform_data_dir_with(&|key| std::env::var_os(key))
+}
+
+#[cfg(windows)]
+fn platform_data_dir_with(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    if let Some(dir) = lookup("LOCALAPPDATA") {
         if !dir.is_empty() {
             return Ok(PathBuf::from(dir));
         }
     }
-    if let Some(profile) = std::env::var_os("USERPROFILE") {
+    if let Some(profile) = lookup("USERPROFILE") {
         return Ok(PathBuf::from(profile).join("AppData").join("Local"));
     }
     Err(Error::NotFound)
 }
 
 #[cfg(target_os = "macos")]
-fn platform_data_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or(Error::NotFound)?;
+fn platform_data_dir_with(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    let home = lookup("HOME").ok_or(Error::NotFound)?;
     Ok(PathBuf::from(home)
         .join("Library")
         .join("Application Support"))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn platform_data_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_DATA_HOME") {
+fn platform_data_dir_with(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    if let Some(dir) = lookup("XDG_DATA_HOME") {
         if !dir.is_empty() {
             return Ok(PathBuf::from(dir));
         }
     }
-    let home = std::env::var_os("HOME").ok_or(Error::NotFound)?;
+    let home = lookup("HOME").ok_or(Error::NotFound)?;
     Ok(PathBuf::from(home).join(".local").join("share"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn lookup<'a>(entries: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        let map: HashMap<&str, &str> = entries.iter().copied().collect();
+        move |key: &str| map.get(key).map(OsString::from)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_prefers_localappdata() {
+        let env = lookup(&[
+            ("LOCALAPPDATA", r"C:\Data"),
+            ("USERPROFILE", r"C:\Users\me"),
+        ]);
+        assert_eq!(
+            platform_data_dir_with(&env).unwrap(),
+            PathBuf::from(r"C:\Data")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_falls_back_to_userprofile() {
+        let env = lookup(&[("USERPROFILE", r"C:\Users\me")]);
+        assert_eq!(
+            platform_data_dir_with(&env).unwrap(),
+            PathBuf::from(r"C:\Users\me").join("AppData").join("Local")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_without_any_env_fails() {
+        let env = lookup(&[]);
+        assert!(matches!(platform_data_dir_with(&env), Err(Error::NotFound)));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_uses_home() {
+        let env = lookup(&[("HOME", "/Users/me")]);
+        assert_eq!(
+            platform_data_dir_with(&env).unwrap(),
+            PathBuf::from("/Users/me/Library/Application Support")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_without_home_fails() {
+        let env = lookup(&[]);
+        assert!(matches!(platform_data_dir_with(&env), Err(Error::NotFound)));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_prefers_xdg_data_home() {
+        let env = lookup(&[("XDG_DATA_HOME", "/xdg"), ("HOME", "/home/me")]);
+        assert_eq!(platform_data_dir_with(&env).unwrap(), PathBuf::from("/xdg"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_falls_back_to_home() {
+        let env = lookup(&[("HOME", "/home/me")]);
+        assert_eq!(
+            platform_data_dir_with(&env).unwrap(),
+            PathBuf::from("/home/me/.local/share")
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_empty_xdg_falls_back_to_home() {
+        let env = lookup(&[("XDG_DATA_HOME", ""), ("HOME", "/home/me")]);
+        assert_eq!(
+            platform_data_dir_with(&env).unwrap(),
+            PathBuf::from("/home/me/.local/share")
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_without_any_env_fails() {
+        let env = lookup(&[]);
+        assert!(matches!(platform_data_dir_with(&env), Err(Error::NotFound)));
+    }
 }

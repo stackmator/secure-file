@@ -133,6 +133,129 @@ jobs:
       - name: Run second-user tests
         run: cargo test --test second_user -- --nocapture
 
+  filesystems-macos:
+    name: filesystems (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare disk images
+        run: |
+          cross=/tmp/secure-file-cross
+          if hdiutil create -size 8m -fs HFS+ -volname SecureFileCross "$cross.dmg" \
+             && mkdir -p "$cross" \
+             && hdiutil attach "$cross.dmg" -nobrowse -mountpoint "$cross" \
+             && sudo chown -R "$(id -u):$(id -g)" "$cross" \
+             && touch "$cross/.probe"; then
+            rm -f "$cross/.probe"
+            echo "SECURE_FILE_CROSS_DIR=$cross" >> "$GITHUB_ENV"
+          else
+            echo "::warning::could not set up the cross-volume disk image"
+          fi
+
+          ro=/tmp/secure-file-ro
+          if hdiutil create -size 8m -fs HFS+ -volname SecureFileRO "$ro.dmg" \
+             && mkdir -p "$ro" \
+             && hdiutil attach "$ro.dmg" -nobrowse -mountpoint "$ro" \
+             && sudo chmod 777 "$ro" \
+             && hdiutil detach "$ro" \
+             && hdiutil attach "$ro.dmg" -nobrowse -readonly -mountpoint "$ro"; then
+            if touch "$ro/.probe" 2>/dev/null; then
+              rm -f "$ro/.probe"
+              echo "::warning::read-only disk image is writable; skipping read-only tests"
+            else
+              echo "SECURE_FILE_RO_DIR=$ro" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "::warning::could not set up the read-only disk image"
+          fi
+
+      - name: Run filesystem tests
+        run: cargo test --test ci_env -- --nocapture
+
+      - name: Clean up
+        if: always()
+        run: |
+          hdiutil detach /tmp/secure-file-cross 2>/dev/null || true
+          hdiutil detach /tmp/secure-file-ro 2>/dev/null || true
+
+  filesystems-windows:
+    name: filesystems (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prepare VHD volumes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path 'C:\secure-file-vhd' | Out-Null
+
+          function New-Volume {
+              param([string]$File, [string]$Letter, [switch]$ReadOnly)
+              $lines = @(
+                  "create vdisk file=`"$File`" maximum=64 type=fixed",
+                  "select vdisk file=`"$File`"",
+                  "attach vdisk",
+                  "create partition primary",
+                  "format fs=ntfs quick label=SecureFile",
+                  "assign letter=$Letter"
+              )
+              if ($ReadOnly) {
+                  $lines += "select volume $Letter"
+                  $lines += "attributes volume set readonly"
+              }
+              $lines += "exit"
+              $script = Join-Path 'C:\secure-file-vhd' "$Letter.txt"
+              $lines | Set-Content -Path $script -Encoding ascii
+              $output = & diskpart /s $script 2>&1
+              if ($LASTEXITCODE -ne 0) { throw "diskpart failed: $output" }
+          }
+
+          try {
+              New-Volume -File 'C:\secure-file-vhd\cross.vhd' -Letter R
+              Set-Content -Path 'R:\probe.txt' -Value 'x' -ErrorAction Stop
+              Remove-Item 'R:\probe.txt' -Force
+              "SECURE_FILE_CROSS_DIR=R:\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+              Write-Host 'cross volume ready at R:\'
+          } catch {
+              Write-Warning "cross volume setup failed: $_"
+          }
+
+          try {
+              New-Volume -File 'C:\secure-file-vhd\ro.vhd' -Letter S -ReadOnly
+              $writable = $true
+              try {
+                  Set-Content -Path 'S:\probe.txt' -Value 'x' -ErrorAction Stop
+                  Remove-Item 'S:\probe.txt' -Force
+              } catch {
+                  $writable = $false
+              }
+              if ($writable) {
+                  Write-Warning 'read-only volume is writable; skipping read-only tests'
+              } else {
+                  "SECURE_FILE_RO_DIR=S:\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+                  Write-Host 'read-only volume ready at S:\'
+              }
+          } catch {
+              Write-Warning "read-only volume setup failed: $_"
+          }
+
+      - name: Run filesystem tests
+        run: cargo test --test ci_env -- --nocapture
+
   docs:
     name: docs
     runs-on: ubuntu-latest
