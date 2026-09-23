@@ -201,6 +201,18 @@ fn validate_file(file: &File, follow_symlinks: bool) -> Result<()> {
     Ok(())
 }
 
+/// Returns whether `path` is a reparse point (symbolic link or junction). A
+/// missing path is not a link.
+pub(crate) fn path_is_link(path: &Path) -> Result<bool> {
+    use std::os::windows::fs::MetadataExt;
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(Error::from(err)),
+    }
+}
+
 fn reopen_for_security(file: &File) -> Result<HANDLE> {
     let handle = unsafe {
         ReOpenFile(

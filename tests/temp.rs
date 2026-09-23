@@ -1,6 +1,17 @@
 mod common;
 
 use secure_file::{SecureTempDir, SecureTempFile};
+use std::path::Path;
+
+#[cfg(unix)]
+fn try_symlink_file(target: &Path, link: &Path) -> bool {
+    std::os::unix::fs::symlink(target, link).is_ok()
+}
+
+#[cfg(windows)]
+fn try_symlink_file(target: &Path, link: &Path) -> bool {
+    std::os::windows::fs::symlink_file(target, link).is_ok()
+}
 
 #[test]
 fn temp_file_is_private() {
@@ -83,6 +94,31 @@ fn temp_file_persist_replaces_existing() {
 fn temp_file_new_in_missing_dir_fails() {
     let dir = tempfile::tempdir().unwrap();
     assert!(SecureTempFile::new_in(dir.path().join("missing")).is_err());
+}
+
+#[test]
+fn temp_file_persist_replaces_symlink_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"original").unwrap();
+
+    let link = dir.path().join("link");
+    if !try_symlink_file(&target, &link) {
+        eprintln!("skipping: symlink creation not permitted");
+        return;
+    }
+
+    let mut file = SecureTempFile::new_in(dir.path()).unwrap();
+    file.write_all(b"new").unwrap();
+    file.persist(&link).unwrap();
+
+    // The link itself is replaced; the link's target is untouched.
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    assert_eq!(std::fs::read(&link).unwrap(), b"new");
+    assert!(!std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }
 
 #[test]

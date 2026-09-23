@@ -1,3 +1,5 @@
+mod common;
+
 use secure_file::{Error, SecureFile};
 use std::sync::{Arc, Barrier};
 
@@ -61,4 +63,38 @@ fn concurrent_write_private_leaves_a_private_file() {
     let file = SecureFile::open(path.as_ref()).unwrap();
     assert!(file.is_private().unwrap());
     assert_eq!(secure_file::read_private(path.as_ref()).unwrap().len(), 1);
+}
+
+#[test]
+fn concurrent_ensure_private() {
+    const THREADS: usize = 8;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("token");
+    std::fs::write(&path, b"data").unwrap();
+    common::make_insecure_file(&path);
+
+    let path = Arc::new(path);
+    let barrier = Arc::new(Barrier::new(THREADS));
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let path = Arc::clone(&path);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let file = SecureFile::open_unchecked(path.as_ref()).unwrap();
+                file.ensure_private().map(|_| ())
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+
+    assert!(SecureFile::open(path.as_ref())
+        .unwrap()
+        .is_private()
+        .unwrap());
 }

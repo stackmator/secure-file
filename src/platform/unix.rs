@@ -30,6 +30,16 @@ fn reject_symlink(path: &Path) -> Result<()> {
     }
 }
 
+/// Returns whether `path` is a symbolic link (or, on other platforms, another
+/// kind of link-like object). A missing path is not a link.
+pub(crate) fn path_is_link(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(Error::from(err)),
+    }
+}
+
 fn permissions_from_mode(mode: u32) -> SecurePermissions {
     SecurePermissions {
         owner_only: mode & 0o077 == 0,

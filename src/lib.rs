@@ -167,10 +167,8 @@ where
     let path = path.as_ref();
     let data = data.as_ref();
 
-    if let Ok(metadata) = std::fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            return Err(Error::SymlinkDetected);
-        }
+    if platform::path_is_link(path)? {
+        return Err(Error::SymlinkDetected);
     }
 
     let parent = match path.parent() {

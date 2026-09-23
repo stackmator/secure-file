@@ -175,3 +175,42 @@ fn create_dir_on_symlink_is_rejected() {
         "unexpected error: {err:?}"
     );
 }
+
+/// Creates an NTFS junction, which (like a symlink) is a reparse point but
+/// does not require any special privilege.
+#[cfg(windows)]
+fn try_junction(target: &Path, link: &Path) -> bool {
+    std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+#[test]
+fn junction_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    secure_file::create_dir(&real).unwrap();
+
+    let link = dir.path().join("junction");
+    if !try_junction(&real, &link) {
+        eprintln!("skipping: junction creation not permitted");
+        return;
+    }
+
+    let err = SecureDir::open_unchecked(&link).unwrap_err();
+    assert!(
+        matches!(err, Error::SymlinkDetected),
+        "unexpected error: {err:?}"
+    );
+
+    let err = secure_file::write_private_atomic(&link, b"secret").unwrap_err();
+    assert!(
+        matches!(err, Error::SymlinkDetected),
+        "unexpected error: {err:?}"
+    );
+}
